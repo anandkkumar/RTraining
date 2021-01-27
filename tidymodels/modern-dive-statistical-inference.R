@@ -1,6 +1,6 @@
 ####----
 # Statistical Inference via Data Science: A ModernDive into R and the Tidyverse.
-# Based on content published on https://moderndive.com/ and https://www.tidymodels.org/books/moderndive/ and
+# Based on content published on https://moderndive.com/ and https://www.tidymodels.org/books/moderndive/
 
 ####----
 
