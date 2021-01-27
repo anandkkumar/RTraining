@@ -12,6 +12,9 @@ library(skimr)
 library(infer)
 library(broom)
 library(janitor)
+library(tibble)
+library(forcats)
+library(dygraphs)
 
 library(nycflights13)
 library(fivethirtyeight)
@@ -1056,3 +1059,284 @@ price_interaction_model <- lm(log10_price ~ log10_size * condition, data = house
 
 # the baseline for comparison group for the categorical variable condition are the condition 1 houses
 get_regression_table(price_interaction_model)
+
+
+#### Inference Examples
+
+age_at_marriage <- read_csv("https://moderndive.com/data/ageAtMar.csv")
+
+ggplot(age_at_marriage, aes(x = age)) +
+  geom_histogram(binwidth = 3, color= "white")
+
+age_mean <- age_at_marriage %>%
+  specify(response = age) %>%
+  calculate(stat = "mean")
+
+null_distribution_age <- age_at_marriage %>%
+  specify(response = age) %>% # or use formula = age ~ NULL
+  hypothesize(null = "point", mu = 23) %>%
+  # We need to use 'bootstrap' and not 'permute' when there is no explanatory variable
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "mean")
+
+visualize(null_distribution_age) +
+  shade_p_value(obs_stat = age_mean, direction = "right")
+
+null_distribution_age %>%
+  get_p_value(obs_stat = age_mean, direction = "right")
+
+age_ci <- null_distribution_age %>%
+  get_ci(level = 0.95, type = "percentile")
+
+visualize(null_distribution_age) +
+  shade_ci(endpoints = age_ci)
+
+# stat_qq requires the sample aesthetic
+ggplot(age_at_marriage, aes(sample = age)) +
+  stat_qq()
+
+# we can standardize the test statistic of X into a T statistic that follows a t-distribution with degrees of freedom equal to n-1
+# The distribution is defined as T = (X_bar - mu_population)/ (sd_sample/sqrt(sample_size))
+
+# Observed test statistic. The reported p-value is effectively zero.
+age_at_marriage %>%
+  t_test(response = age, alternative = "greater", mu = 23)
+
+
+
+elec <- c(rep("satisfied", 73), rep("unsatisfied", 27)) %>%
+  enframe() %>%
+  rename(satisfy = value)
+
+ggplot(elec, aes(x = satisfy)) +
+  geom_bar()
+
+p_hat <- elec %>%
+  specify(response = satisfy, success = "satisfied") %>%
+  calculate(stat = "prop")
+
+null_distribution_elec <- elec %>%
+  specify(response = satisfy, success = "satisfied") %>%
+  hypothesize(null = "point", p = 0.8) %>%
+  # We need to use 'simulate' and not 'bootstrap' or 'permute' when there is no explanatory
+  generate(reps = 10000, type = "simulate") %>%
+  calculate(stat = "prop")
+
+visualize(null_distribution_elec) +
+shade_p_value(obs_stat = p_hat, direction = "both")
+
+null_distribution_elec %>%
+  get_p_value(obs_stat = p_hat, direction = "both")
+
+bootstrap_distribution_elec <- elec %>%
+  specify(response = satisfy, success = "satisfied") %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "prop")
+
+elec_ci <- bootstrap_distribution_elec %>%
+  get_ci(level = 0.95, type = "percentile")
+
+visualize(bootstrap_distribution_elec) +
+  shade_ci(endpoints = elec_ci)
+
+# we can standardize the test statistic of X into a Z statistic that follows a N(0,1) distribution
+# The distribution is defined as Z = (p_hat - p_population)/ ( p_population*(1-p_population) )/sqrt(sample_size))
+
+z_null_distribution_elec <- elec %>%
+  specify(response = satisfy, success = "satisfied") %>%
+  hypothesize(null = "point", p = 0.8) %>%
+  calculate(stat = "z")
+
+z_obs <- as.numeric(z_null_distribution_elec)
+
+visualize(z_null_distribution_elec, method = "theoretical") +
+  shade_p_value(obs_stat = z_obs, direction = "both")
+
+bootstrap_distribution_elec %>% get_p_value(obs_stat = p_hat, direction = "both")
+
+# Inspect p_value
+elec %>%
+  prop_test(response = satisfy, success = "satisfied", alternative = "two-sided", p = 0.8, conf_level = 0.95, correct = FALSE)
+
+
+
+offshore <- read_csv("https://moderndive.com/data/offshore.csv")
+
+offshore %>% group_by(college_grad, response) %>% tally()
+
+offshore <- offshore %>%
+  mutate(response = fct_rev(response))
+
+ggplot(offshore, aes(x = college_grad, fill = response)) +
+  geom_bar(position = "fill") +
+  labs(x = "College grad?", y = "Proportion with no opinion on drilling") +
+  coord_flip()
+
+d_hat <- offshore %>%
+  specify(response ~ college_grad, success = "no opinion") %>%
+  calculate(stat = "diff in props", order = c("yes", "no"))
+
+null_distribution_offshore <- offshore %>%
+  specify(response ~ college_grad, success = "no opinion") %>%
+  hypothesize(null = "independence") %>%
+  generate(reps = 1000, type = "permute") %>%
+  calculate(stat = "diff in props", order = c("yes", "no"))
+
+visualize(null_distribution_offshore) +
+  shade_p_value(obs_stat = d_hat, direction = "both")
+
+null_distribution_offshore %>%
+  get_p_value(obs_stat = d_hat, direction = "both")
+
+
+bootstrap_distribution_offshore <- offshore %>%
+  specify(response ~ college_grad, success = "no opinion") %>%
+  generate(reps = 1000, type = "bootstrap") %>%
+  calculate(stat = "diff in props", order = c("yes", "no"))
+
+offshore_ci <- bootstrap_distribution_offshore %>%
+  get_ci(level = 0.95, type = "percentile")
+
+# We see that 0 is not contained in this confidence interval as a plausible value
+visualize(bootstrap_distribution_offshore) +
+  shade_ci(endpoints = offshore_ci)
+
+# Checking conditions for theoretical approach
+# Sample size: The number of pooled successes and pooled failures must be at least 10 for each group.
+
+
+# Observed test statistic.
+# The observed difference in sample proportions is 3.16 standard deviations smaller than 0.
+offshore %>%
+  specify(response ~ college_grad, success = "no opinion") %>%
+  calculate(stat = "z", order = c("yes", "no"))
+
+# Inspect p_value
+offshore %>%
+  prop_test(formula = response ~ college_grad, success = "no opinion", order = c("yes", "no"),
+            alternative = "two-sided", conf_level = 0.95, z = TRUE)
+
+
+
+cle_sac <- read.delim("https://moderndive.com/data/cleSac.txt") %>%
+  rename(
+    metro_area = Metropolitan_area_Detailed,
+    income = Total_personal_income
+  ) %>%
+  na.omit()
+
+ggplot(cle_sac, aes(x = metro_area, y = income)) +
+  geom_boxplot() +
+  stat_summary(fun = mean, geom = "point", color = "red")
+
+d_hat <- cle_sac %>%
+  specify(income ~ metro_area) %>%
+  calculate(stat = "diff in means", order = c("Sacramento_ CA", "Cleveland_ OH"))
+
+null_distribution_cle_sac <- cle_sac %>%
+  specify(income ~ metro_area) %>%
+  hypothesize(null = "independence") %>%
+  generate(reps = 10000, type = "permute") %>%
+  calculate(stat = "diff in means", order = c("Sacramento_ CA", "Cleveland_ OH"))
+
+visualize(null_distribution_cle_sac) +
+  shade_p_value(obs_stat = d_hat, direction = "both")
+
+null_distribution_cle_sac %>%
+  get_pvalue(obs_stat = d_hat, direction = "both")
+
+
+bootstrap_distribution_cle_sac <- cle_sac %>%
+  specify(income ~ metro_area) %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "diff in means", order = c("Sacramento_ CA", "Cleveland_ OH"))
+
+cle_sac_ci <- bootstrap_distribution_cle_sac %>%
+  get_ci(level = 0.95, type = "percentile")
+
+# We see that 0 is contained in this confidence interval as a plausible value
+visualize(bootstrap_distribution_cle_sac) +
+  shade_ci(endpoints = cle_sac_ci)
+
+
+# The distribution of the response for each group should be normal or the sample sizes should be at least 30.
+# We have reason to doubt the normality assumption but sample size is greater than 30 and so we can still use our theoretical approach.
+ggplot(cle_sac, aes(x = income)) +
+  geom_histogram(color = "white", binwidth = 20000) +
+  facet_wrap(~metro_area)
+
+# Observed test statistic
+cle_sac %>%
+  specify(income ~ metro_area) %>%
+  calculate(stat = "t", order = c("Sacramento_ CA", "Cleveland_ OH"))
+
+# Inspect p_value
+cle_sac %>%
+  t_test(formula = income ~ metro_area, order = c("Sacramento_ CA", "Cleveland_ OH"),
+         alternative = "two-sided", conf_level = 0.95)
+
+
+
+zinc_tidy <- read_csv("https://moderndive.com/data/zinc_tidy.csv")
+
+zinc_diff <- zinc_tidy %>%
+  group_by(loc_id) %>%
+  summarize(pair_diff = diff(concentration)) %>%
+  ungroup()
+
+d_hat <- zinc_diff %>%
+  specify(response = pair_diff) %>%
+  calculate(stat = "mean")
+
+null_distribution_zinc <- zinc_diff %>%
+  specify(response = pair_diff) %>%
+  hypothesize(null = "point", mu = 0) %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "mean")
+
+visualize(null_distribution_zinc) +
+  shade_p_value(obs_stat = d_hat, direction = "left")
+
+null_distribution_zinc %>%
+  get_p_value(obs_stat = d_hat, direction = "left")
+
+bootstrap_distribution_zinc <- zinc_diff %>%
+  specify(response = pair_diff) %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "mean")
+
+zinc_ci <- bootstrap_distribution_zinc %>%
+  get_ci(level = 0.95, type = "percentile")
+
+visualize(bootstrap_distribution_zinc) +
+  shade_ci(endpoints = zinc_ci)
+
+# The histogram shows some skew so we have reason to doubt the population being normal based on this sample.
+# We also only have 10 pairs which is fewer than the 30 needed. A theory-based test may not be valid here.
+ggplot(zinc_diff, aes(x = pair_diff)) +
+  geom_histogram(binwidth = 0.04, color = "white")
+
+# Observed test statistic
+zinc_diff %>%
+  specify(response = pair_diff) %>%
+  calculate(stat = "t", mu = 0)
+
+# Inspect p_value
+zinc_diff %>%
+  t_test(response = pair_diff, alternative = "less", mu = 0)
+
+
+
+### INTERACTIVE GRAPHICS
+
+flights_day <- mutate(flights, date = as.Date(time_hour))
+
+flights_summarized <- flights_day %>%
+  group_by(date) %>%
+  summarize(median_arr_delay = median(arr_delay, na.rm = TRUE))
+
+# The dygraph function expects the dates to be given as the rownames of the object
+rownames(flights_summarized) <- flights_summarized$date
+flights_summarized <- select(flights_summarized, -date)
+
+dyRangeSelector(dygraph(flights_summarized))
